@@ -1,3 +1,4 @@
+const assistantId = process.env.OPENAI_ASSISTANT_ID;
 
 import 'dotenv/config';
 import express from 'express';
@@ -52,7 +53,7 @@ app.post('/webhook', middleware(lineConfig), async (req, res) => {
 
     try {
       const completion = await openai.beta.threads.createAndRun({
-        assistant_id: process.env.OPENAI_ASSISTANT_ID,
+        assistant_id: assistantId,
         thread: {
           messages: [
             {
