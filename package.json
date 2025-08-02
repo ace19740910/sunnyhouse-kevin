@@ -1,21 +1,12 @@
 {
-  "name": "sunnyhouse-kevin",
+  "name": "kevin-bot",
   "version": "1.0.0",
-  "description": "Kevin AI LINE bot for SunnyHouse",
+  "description": "LINE Bot for SunnyHouse",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "axios": "^1.6.0",
-    "dotenv": "^16.0.3",
-    "express": "^4.18.2",
-{
-  "dependencies": {
     "@line/bot-sdk": "^9.5.3"
-  }
-}
-
-    "openai": "^4.0.0"
   }
 }
