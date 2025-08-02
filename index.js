@@ -1,99 +1,105 @@
-import express from 'express';
-import { config } from 'dotenv';
-import { Configuration, OpenAIApi } from 'openai';
-import { middleware, Client } from '@line/bot-sdk';
 
-config();
+import 'dotenv/config';
+import express from 'express';
+import { middleware, Client } from '@line/bot-sdk';
+import OpenAI from 'openai';
 
 const app = express();
-const port = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000;
 
+// LINE Bot 設定
 const lineConfig = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
-  channelSecret: process.env.LINE_CHANNEL_SECRET
+  channelSecret: process.env.LINE_CHANNEL_SECRET,
 };
 
-const client = new Client(lineConfig);
+const lineClient = new Client(lineConfig);
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-const openai = new OpenAIApi(
-  new Configuration({
-    apiKey: process.env.OPENAI_API_KEY
-  })
-);
-
-const assistantId = process.env.OPENAI_ASSISTANT_ID;
-let manualMode = false;
+let allowKevinReply = true; // 控制開關
 
 app.post('/webhook', middleware(lineConfig), async (req, res) => {
   const events = req.body.events;
-  const results = await Promise.all(events.map(handleEvent));
+
+  const results = await Promise.all(events.map(async (event) => {
+    if (event.type !== 'message' || event.message.type !== 'text') {
+      return null;
+    }
+
+    const userMessage = event.message.text.trim();
+
+    // 控制開關：手動接管
+    if (userMessage === '手動接管') {
+      allowKevinReply = false;
+      return lineClient.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '已切換為手動回覆模式，Kevin 暫時安靜。',
+      });
+    }
+
+    // 控制開關：恢復 Kevin 回覆
+    if (userMessage === '關閉手動') {
+      allowKevinReply = true;
+      return lineClient.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '已恢復 Kevin 自動回覆。',
+      });
+    }
+
+    if (!allowKevinReply) {
+      return null;
+    }
+
+    try {
+      const completion = await openai.beta.threads.createAndRun({
+        assistant_id: process.env.OPENAI_ASSISTANT_ID,
+        thread: {
+          messages: [
+            {
+              role: 'user',
+              content: userMessage,
+            },
+          ],
+        },
+      });
+
+      const runId = completion.id;
+      let messages = [];
+      while (true) {
+        const runStatus = await openai.beta.threads.runs.retrieve(runId);
+        if (runStatus.status === 'completed') {
+          const threadMessages = await openai.beta.threads.messages.list(runStatus.thread_id);
+          messages = threadMessages.data;
+          break;
+        } else if (runStatus.status === 'failed') {
+          throw new Error('Kevin 回覆失敗。');
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+
+      const replyText = messages
+        .filter(msg => msg.role === 'assistant')
+        .map(msg => msg.content.map(part => part.text.value).join('\n'))
+        .join('\n')
+        .trim();
+
+      return lineClient.replyMessage(event.replyToken, {
+        type: 'text',
+        text: replyText || 'Kevin 沒有回覆任何內容。',
+      });
+
+    } catch (error) {
+      console.error('Kevin 回覆錯誤:', error);
+      return lineClient.replyMessage(event.replyToken, {
+        type: 'text',
+        text: '抱歉，Kevin 回覆時發生錯誤。',
+      });
+    }
+  }));
+
   res.json(results);
 });
 
-async function handleEvent(event) {
-  if (event.type !== 'message' || event.message.type !== 'text') {
-    return null;
-  }
-
-  const userMessage = event.message.text.trim();
-
-  if (userMessage === '我想要通話') {
-    manualMode = true;
-    return client.replyMessage(event.replyToken, {
-      type: 'text',
-      text: '已為您通知真人，稍後會與您聯繫。'
-    });
-  }
-
-  if (userMessage === '取消通話' || userMessage === '可以繼續說話了') {
-    manualMode = false;
-    return client.replyMessage(event.replyToken, {
-      type: 'text',
-      text: '好的，Kevin 繼續為您服務。'
-    });
-  }
-
-  if (manualMode) return null;
-
-  try {
-    const thread = await openai.beta.threads.create();
-    await openai.beta.threads.messages.create(thread.id, {
-      role: 'user',
-      content: userMessage
-    });
-    const run = await openai.beta.threads.runs.create(thread.id, {
-      assistant_id: assistantId
-    });
-
-    let responseText = 'Kevin 正在思考中...';
-
-    while (true) {
-      const status = await openai.beta.threads.runs.retrieve(thread.id, run.id);
-      if (status.status === 'completed') {
-        const messages = await openai.beta.threads.messages.list(thread.id);
-        const lastMsg = messages.data.find(m => m.role === 'assistant');
-        responseText = lastMsg?.content?.map(c => c.text?.value).join('\n') || '很抱歉，我沒有收到回覆。';
-        break;
-      } else if (status.status === 'failed') {
-        responseText = '很抱歉，Kevin 沒有回應成功，請稍後再試。';
-        break;
-      }
-      await new Promise(resolve => setTimeout(resolve, 1500));
-    }
-
-    return client.replyMessage(event.replyToken, {
-      type: 'text',
-      text: responseText
-    });
-  } catch (err) {
-    console.error('Error:', err);
-    return client.replyMessage(event.replyToken, {
-      type: 'text',
-      text: '發生錯誤，請稍後再試。'
-    });
-  }
-}
-
-app.listen(port, () => {
-  console.log(`Kevin bot is listening on port ${port}`);
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
 });
