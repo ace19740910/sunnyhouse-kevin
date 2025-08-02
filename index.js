@@ -1,64 +1,93 @@
-require('dotenv').config();
-const express = require('express');
-const { middleware, Client } = require('@line/bot-sdk');
-const { OpenAI } = require('openai');
+import express from 'express';
+import { middleware, Client } from '@line/bot-sdk';
+import OpenAI from 'openai';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const app = express();
+app.use(express.json());
 
-const lineConfig = {
+const config = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
   channelSecret: process.env.LINE_CHANNEL_SECRET,
 };
 
-const client = new Client(lineConfig);
-
+const lineClient = new Client(config);
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-app.post('/webhook', middleware(lineConfig), async (req, res) => {
-  const events = req.body.events;
+let enableAutoReply = true;
 
-  const results = await Promise.all(
-    events.map(async (event) => {
-      if (event.type !== 'message' || event.message.type !== 'text') {
-        return null;
-      }
+app.post('/webhook', middleware(config), async (req, res) => {
+  try {
+    const events = req.body.events;
+    for (const event of events) {
+      if (event.type === 'message' && event.message.type === 'text') {
+        const userMessage = event.message.text.trim();
 
-      const userMessage = event.message.text;
+        if (userMessage === '關閉AI') {
+          enableAutoReply = false;
+          await lineClient.replyMessage(event.replyToken, {
+            type: 'text',
+            text: '已關閉 Kevin 自動回覆功能。',
+          });
+          continue;
+        }
 
-      try {
-        const completion = await openai.chat.completions.create({
-          model: 'gpt-4o',
-          messages: [
-            {
-              role: 'system',
-              content:
-                '你是 Kevin，是陽光小屋旅遊的 AI 客服。語氣自然、有人味，能幫忙解答各種問題，但會提醒使用者最終細節需與真人確認。',
-            },
-            { role: 'user', content: userMessage },
-          ],
+        if (userMessage === '開啟AI') {
+          enableAutoReply = true;
+          await lineClient.replyMessage(event.replyToken, {
+            type: 'text',
+            text: '已開啟 Kevin 自動回覆功能。',
+          });
+          continue;
+        }
+
+        if (!enableAutoReply) continue;
+
+        const thread = await openai.beta.threads.create();
+        const msg = await openai.beta.threads.messages.create(thread.id, {
+          role: 'user',
+          content: userMessage,
         });
 
-        const replyText = completion.choices[0].message.content;
-        return client.replyMessage(event.replyToken, {
+        const run = await openai.beta.threads.runs.create(thread.id, {
+          assistant_id: process.env.OPENAI_ASSISTANT_ID,
+        });
+
+        let runStatus;
+        do {
+          runStatus = await openai.beta.threads.runs.retrieve(thread.id, run.id);
+          if (runStatus.status !== 'completed') {
+            await new Promise(r => setTimeout(r, 1500));
+          }
+        } while (runStatus.status !== 'completed');
+
+        const messages = await openai.beta.threads.messages.list(thread.id);
+        const reply = messages.data
+          .filter(m => m.role === 'assistant')
+          .map(m => m.content[0].text.value)
+          .join('
+')
+          .trim();
+
+        await lineClient.replyMessage(event.replyToken, {
           type: 'text',
-          text: replyText,
-        });
-      } catch (error) {
-        console.error('OpenAI 回覆錯誤:', error);
-        return client.replyMessage(event.replyToken, {
-          type: 'text',
-          text: '抱歉，我暫時無法回答，請稍後再試或聯絡真人客服。',
+          text: reply || 'Kevin 沒有給出回覆喔！',
         });
       }
-    })
-  );
+    }
 
-  res.status(200).send('OK');
+    res.status(200).send('OK');
+  } catch (err) {
+    console.error('Webhook error:', err);
+    res.status(500).send('Error');
+  }
 });
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
-  console.log(`Kevin 機器人正在監聽 ${port} port`);
+  console.log(`Kevin Bot is running on port ${port}`);
 });
