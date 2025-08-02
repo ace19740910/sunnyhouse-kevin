@@ -1,13 +1,13 @@
-# SunnyHouse Kevin
+# Kevin AI LINE Bot
 
-This is a LINE bot powered by GPT-4o, deployed via Railway and connected with the LINE Messaging API.
+這是陽光小屋的 AI 客服 Kevin，架構如下：
 
-## Features
-- LINE Webhook support
-- GPT-4o integration
-- Express-based webhook listener
+- 使用 LINE Bot SDK 接收訊息
+- 使用 OpenAI GPT 回覆訊息
+- 使用 Express + Railway 作為 Webhook 中介
 
-## Setup
-1. Copy `.env.example` to `.env` and fill in your credentials
-2. Deploy to Railway
-3. Set the webhook URL in LINE developer console
+## 使用方式
+
+1. 設定 `.env`
+2. `npm install`
+3. `npm start`
