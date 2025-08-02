@@ -1,71 +1,64 @@
-require("dotenv").config();
-const express = require("express");
-const { Configuration, OpenAIApi } = require("openai");
-const line = require("@line/bot-sdk");
+require('dotenv').config();
+const express = require('express');
+const { middleware, Client } = require('@line/bot-sdk');
+const { OpenAI } = require('openai');
 
 const app = express();
-app.use(express.json());
 
-const config = {
+const lineConfig = {
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
   channelSecret: process.env.LINE_CHANNEL_SECRET,
 };
 
-const client = new line.Client(config);
+const client = new Client(lineConfig);
 
-// GPT 初始化
-const openai = new OpenAIApi(
-  new Configuration({
-    apiKey: process.env.OPENAI_API_KEY,
-  })
-);
-
-app.post("/webhook", line.middleware(config), async (req, res) => {
-  try {
-    const events = req.body.events;
-    await Promise.all(events.map(handleEvent));
-    res.status(200).end();
-  } catch (err) {
-    console.error("Webhook Error:", err);
-    res.status(500).end();
-  }
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
 });
 
-async function handleEvent(event) {
-  if (event.type !== "message" || event.message.type !== "text") {
-    return Promise.resolve(null);
-  }
+app.post('/webhook', middleware(lineConfig), async (req, res) => {
+  const events = req.body.events;
 
-  const userMessage = event.message.text;
+  const results = await Promise.all(
+    events.map(async (event) => {
+      if (event.type !== 'message' || event.message.type !== 'text') {
+        return null;
+      }
 
-  try {
-    const gptRes = await openai.createChatCompletion({
-      model: "gpt-4o",
-      messages: [
-        {
-          role: "system",
-          content: "你是陽光小屋的 AI 客服 Kevin，語氣自然、有點人味與幽默，幫客人貼心回答問題。若客人需要更進一步的資訊，請提醒他輸入『我想要通話』，你會轉交真人聯絡。",
-        },
-        { role: "user", content: userMessage },
-      ],
-    });
+      const userMessage = event.message.text;
 
-    const replyText = gptRes.data.choices[0].message.content;
+      try {
+        const completion = await openai.chat.completions.create({
+          model: 'gpt-4o',
+          messages: [
+            {
+              role: 'system',
+              content:
+                '你是 Kevin，是陽光小屋旅遊的 AI 客服。語氣自然、有人味，能幫忙解答各種問題，但會提醒使用者最終細節需與真人確認。',
+            },
+            { role: 'user', content: userMessage },
+          ],
+        });
 
-    return client.replyMessage(event.replyToken, {
-      type: "text",
-      text: replyText,
-    });
-  } catch (err) {
-    console.error("GPT Error:", err);
-    return client.replyMessage(event.replyToken, {
-      type: "text",
-      text: "Kevin 一時斷線了，請稍後再試看看 🙏",
-    });
-  }
-}
+        const replyText = completion.choices[0].message.content;
+        return client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: replyText,
+        });
+      } catch (error) {
+        console.error('OpenAI 回覆錯誤:', error);
+        return client.replyMessage(event.replyToken, {
+          type: 'text',
+          text: '抱歉，我暫時無法回答，請稍後再試或聯絡真人客服。',
+        });
+      }
+    })
+  );
+
+  res.status(200).send('OK');
+});
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
-  console.log("Kevin bot is running on port", port);
+  console.log(`Kevin 機器人正在監聽 ${port} port`);
 });
